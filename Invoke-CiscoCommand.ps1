@@ -2,7 +2,7 @@
 
 <#PSScriptInfo
 
-        .VERSION 1.2
+        .VERSION 1.4.2
 
         .GUID cc2eb093-256f-44db-8260-7239f70f013e
 
@@ -29,6 +29,12 @@
         .RELEASENOTES
         Issue with handing the IPAddress parameter an array has been resolved. It will now iterate thru the list.
 
+        1.3 - Accepts an SSH session for connection instead of creds.
+        1.4 - Removed my debug code. 
+        1.4.1 - Had some scoping issues with the SSH Shell Stream variable. Needed to make it Global: before it would work. 
+                Added $Timeout parameter for changing the sleep time for waiting on return values.
+        1.4.2 - GitHub actions now publishing to PSGallery
+
         .PRIVATEDATA 
 
 #> 
@@ -50,6 +56,11 @@
 
         .PARAMETER Credential
         Credentials with rights to run defined commands on the target device.
+
+        .PARAMETER Timeout
+        Sleep timeer to wait before checking the stream receive. This should never be shorter than your round trip time (RTT) 
+        To find your RTT, you can ping a device. You can find the longest RTT for your company, and set a default parameter value
+        for this script.
 
         .EXAMPLE
         Invoke-CiscoCommand -IPAddress 192.168.1.1 -Command 'show run' -Credential $myCreds
@@ -86,45 +97,121 @@
 #>
 
 
-[CmdLetBinding()]
+[CmdletBinding(DefaultParameterSetName = 'session')]
 Param
 (
-    [Parameter(Mandatory=$true,ValueFromPipeline=$true,HelpMessage='IP address')]
+    [Parameter(Position = 0, Mandatory = $true, ParameterSetName = 'session', HelpMessage = 'Existing Posh-SSH session ID')]
+    [object] $Session,
+
+    [Parameter(Mandatory=$true,HelpMessage='Command to be run')]
+    [String[]] $Command,
+    
+    [Parameter(Position = 0,ParameterSetName = 'cred',Mandatory=$true,ValueFromPipeline=$true,HelpMessage='IP address')]
     [Alias('ComputerName','Name','Switch','Router','Host')]
     [IPAddress[]] $IPAddress,
         
-    [Parameter(Mandatory=$true,HelpMessage='Command to be run')]
-    [String[]] $Command,
-        
-    [Parameter(Mandatory=$true,HelpMessage='Credentials for managed network object')]
-    [PSCredential] [System.Management.Automation.Credential()] $Credential
+    [Parameter(Mandatory=$true,ParameterSetName = 'cred',HelpMessage='Credentials for managed network object')]
+    [PSCredential] [System.Management.Automation.Credential()] $Credential,
+    
+    [Parameter(ParameterSetName = 'cred')]
+    [Switch] $AcceptKey, # Passes param along to POSH-SSH if needed
+
+    [Parameter(ParameterSetName = 'cred')]
+    [Switch] $Force, # Passes param along to POSH-SSH if needed
+
+    [Int] $Timeout = 180 # How long we sleep in milliseconds when waiting for streams to finish sending data. 
 )
+
+Begin {
+
+    function Get-SSHShellStream {
+
+        Param ( 
+    
+            $Session
+        )
+    
+        $sHostname = $Session.Session.ConnectionInfo.Host
+    
+        $sUsername = $Session.Session.ConnectionInfo.Username
+    
+        $ErrorActionPreference = 'SilentlyContinue'
+    
+        $allStreams = Get-Variable | Where-Object { $_.value -match 'Renci\.SshNet\.ShellStream'}
+    
+        foreach ($tmpStream in $allStreams) {
+
+            Write-Verbose -Message ('Stream found for {0}' -$tmpStream.Name)
+    
+            Invoke-Expression -Command ('$tmpObj = ${0}' -f $tmpStream.Name) 
+    
+            if ($tmpObj.Session.ConnectionInfo.Username -eq $sUsername -and $tmpObj.Session.ConnectionInfo.Host -eq $sHostname) {
+    
+                return $tmpObj
+            }
+    
+            Remove-Variable -Name tmpObj
+        }
+    }
+}
 
 Process
 {
     # Variables
     $strNewLine = "`n"
     $strPattern = '#|^$|configuration...|Current configuration :|^\r\n|^$'
-        
-    # Connect to the Cisco switch
-    $objSessionCisco = New-SSHSession -ComputerName $IPAddress -Credential $Credential -AcceptKey -ConnectionTimeout 90 -ErrorAction Stop
+    If (! $Session) {
+        $SshSesssionParams = @{
+            ComputerName = $IPAddress
+            Credential = $Credential
+            AcceptKey = $true
+            ConnectionTimeout = 90
+            ErrorAction = 'Stop'
+        }
+
+        If ($Force)
+        {
+            $SshSesssionParams += @{Force = $Force}
+        }
+
+        If ($Force)
+        {
+            $SshSesssionParams += @{AcceptKey = $AcceptKey}
+        }
+
+        $objSessionCisco = New-SSHSession @SshSesssionParams
+    }
+    else {
+       $objSessionCisco = $Session
+
+       Write-Verbose -Message 'Using existing SSH session to connect'
+    }
 
     Foreach ($node in $objSessionCisco)
     {
-        $SshStream = New-SSHShellStream -SessionID $($node.SessionID)
-        
+        $Global:SshStream = Get-SSHShellStream -Session $node
+
+        if (! $Global:SshStream) {
+            Write-Verbose -Message 'No stream found'
+            $Global:SshStream = New-SSHShellStream -SSHSession $node
+        }
+        else {
+
+            Write-Verbose -Message 'Stream found'
+        }
+
         # Set terminal length
-        $SshStream.WriteLine('terminal length 0')
-        $null = $SshStream.Read()
+        $Global:SshStream.WriteLine('terminal length 0')
+        $null = $Global:SshStream.Read()
 
         $arrayCommands = $Command.Split($strNewLine)
 
         Foreach ($strCiscoCommand in $arrayCommands)
         {
-            $SshStream.WriteLine(('{0}' -f $strCiscoCommand))
+            $Global:SshStream.WriteLine(('{0}' -f $strCiscoCommand))
     
             # Takes a bit for the command to run sometimes
-            Start-Sleep -Milliseconds 200
+            Start-Sleep -Milliseconds $Timeout
         }
         
         $rawOutput = @()
@@ -133,7 +220,7 @@ Process
         
         :waiter While ($true)
         {
-            $streamOut = $sshStream.Read() 
+            $streamOut = $Global:SshStream.Read() 
             
             If ($boolDataReceived -eq $true -and $streamOut.Length -eq 0 -and -not $(($rawOutput.Split($strNewLine) | Select-Object -Last 1) -eq ''))
             {
@@ -147,7 +234,7 @@ Process
                 $boolDataReceived = $true # Watch until we do not receive data anymore
             }
 
-            Start-Sleep -Milliseconds 200
+            Start-Sleep -Milliseconds $Timeout
         }
     
         If (!($PSBoundParameters['Verbose'])) 
@@ -158,5 +245,8 @@ Process
         $rawOutput
     }
 
-    $null = Remove-SSHSession -SessionId $($objSessionCisco.SessionId)
+    if ($Credential) {
+        # $null = Remove-Variable -Name SshStream
+        # $null = Remove-SSHSession -SessionId $($objSessionCisco.SessionId)
+    }
 }
