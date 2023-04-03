@@ -2,7 +2,7 @@
 
 <#PSScriptInfo
 
-        .VERSION 1.4.2
+        .VERSION 1.4.3
 
         .GUID cc2eb093-256f-44db-8260-7239f70f013e
 
@@ -164,7 +164,6 @@ Process
         $SshSesssionParams = @{
             ComputerName = $IPAddress
             Credential = $Credential
-            AcceptKey = $true
             ConnectionTimeout = 90
             ErrorAction = 'Stop'
         }
@@ -174,7 +173,7 @@ Process
             $SshSesssionParams += @{Force = $Force}
         }
 
-        If ($Force)
+        If ($AcceptKey)
         {
             $SshSesssionParams += @{AcceptKey = $AcceptKey}
         }
@@ -246,7 +245,7 @@ Process
     }
 
     if ($Credential) {
-        # $null = Remove-Variable -Name SshStream
-        # $null = Remove-SSHSession -SessionId $($objSessionCisco.SessionId)
+        $null = Remove-Variable -Name SshStream
+        $null = Remove-SSHSession -SessionId $($objSessionCisco.SessionId)
     }
 }
