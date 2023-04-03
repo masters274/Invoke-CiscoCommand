@@ -2,7 +2,7 @@
 
 <#PSScriptInfo
 
-        .VERSION 1.4.4
+        .VERSION 1.4.5
 
         .GUID cc2eb093-256f-44db-8260-7239f70f013e
 
@@ -186,8 +186,8 @@ Process
        Write-Verbose -Message 'Using existing SSH session to connect'
     }
 
-    Foreach ($node in $objSessionCisco)
-    {
+    Foreach ($node in $objSessionCisco) {
+        
         $Global:SshStream = Get-SSHShellStream -Session $node
 
         if (! $Global:SshStream) {
@@ -205,8 +205,8 @@ Process
 
         $arrayCommands = $Command.Split($strNewLine)
 
-        Foreach ($strCiscoCommand in $arrayCommands)
-        {
+        Foreach ($strCiscoCommand in $arrayCommands) {
+            
             $Global:SshStream.WriteLine(('{0}' -f $strCiscoCommand))
     
             # Takes a bit for the command to run sometimes
@@ -217,17 +217,14 @@ Process
         
         $boolDataReceived = $false
         
-        :waiter While ($true)
-        {
+        :waiter While ($true) {
             $streamOut = $Global:SshStream.Read() 
             
-            If ($boolDataReceived -eq $true -and $streamOut.Length -eq 0 -and -not $(($rawOutput.Split($strNewLine) | Select-Object -Last 1) -eq ''))
-            {
+            If ($boolDataReceived -eq $true -and $streamOut.Length -eq 0 -and -not $(($rawOutput.Split($strNewLine) | Select-Object -Last 1) -eq '')) {
                 break waiter
             }
             
-            If ($streamOut.Length -gt 0) 
-            {
+            If ($streamOut.Length -gt 0) {
                 $rawOutput += $streamOut
                 $streamOut = $null 
                 $boolDataReceived = $true # Watch until we do not receive data anymore
@@ -236,8 +233,8 @@ Process
             Start-Sleep -Milliseconds $Timeout
         }
     
-        If (!($PSBoundParameters['Verbose'])) 
-        {
+        If (!($PSBoundParameters['Verbose'])) {
+            
             $rawOutput = $rawOutput.Split($strNewLine) | Select-String -NotMatch -Pattern $strPattern
         }
         
