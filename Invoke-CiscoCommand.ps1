@@ -2,7 +2,7 @@
 
 <#PSScriptInfo
 
-        .VERSION 1.4.3
+        .VERSION 1.4.4
 
         .GUID cc2eb093-256f-44db-8260-7239f70f013e
 
@@ -245,7 +245,10 @@ Process
     }
 
     if ($Credential) {
-        $null = Remove-Variable -Name SshStream
+        
+        $null = if (Get-Variable -Name 'SshStream' -ErrorAction SilentlyContinue -WarningAction SilentlyContinue) { 
+            Remove-Variable -Name 'SshStream' 
+        }
         $null = Remove-SSHSession -SessionId $($objSessionCisco.SessionId)
     }
 }
